@@ -175,7 +175,8 @@ bc. % mkdir /var/local/hadoop
 % chmod 755 /var/local/hadoop
 % chmod 700 /var/local/hadoop/hdfs
 % chmod 755 /var/local/hadoop/mapred
-% chmod 770 /var/local/hadoop/{logs,pid}
+% chmod 770 /var/local/hadoop/pid
+% chmod 775 /var/local/hadoop/logs
 
 h3(#keytab). Creating the KeyTabs
 
