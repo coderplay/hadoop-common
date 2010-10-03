@@ -3145,7 +3145,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     }
       
     // Check for tasks to be killed
-    // 这一步比较耗时
+    // 杩欎竴姝ユ瘮杈冭�楁椂
     List<TaskTrackerAction> killTasksList = getTasksToKill(trackerName);
     if (killTasksList != null) {
       actions.addAll(killTasksList);
