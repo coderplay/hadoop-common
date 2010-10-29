@@ -3429,6 +3429,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     List<TaskTrackerAction> killList = new ArrayList<TaskTrackerAction>();
     if (taskIds != null) {
       for (TaskAttemptID killTaskId : taskIds) {
+    	// 在task数目很多时,taskidToTIPMap.get()方法会占用大量CPU
         TaskInProgress tip = taskidToTIPMap.get(killTaskId);
         if (tip == null) {
           continue;
