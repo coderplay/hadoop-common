@@ -57,6 +57,17 @@ public class DiskChecker {
    * non-existent directory, then we signal an error; Sun's mkdir would signal
    * an error (return false) if a directory it is attempting to create already
    * exists or the mkdir fails.
+   * <p>
+   * mkdirsWithExistsCheck与Sun的java.io.File类所提供的mkdirs方法，它们的语意在
+   * 以下方面有所不同: 
+   * 建立不存在的父目录 ，此方法不管mkdir在何处失败, 都会检查目录是否存在（因为那个
+   * 目录有可能已经由其它进程创建了）。如果对于看上去不存在的目录，mkdir()和
+   * exists()检查都失败时，我们返回一个错误信号(返回false)。
+   * 而当尝试创建一个已存在的目录或者mkdir失败时,Sun的mkdirs就会产生一个error信号。
+   * 
+   * 说白了就是mkdirsWithExistsCheck当目录已存在时，返回true; Sun的mkdirs则会返回
+   * false.
+   * 
    * @param dir
    * @return true on success, false on failure
    */
@@ -73,27 +84,33 @@ public class DiskChecker {
     String parent = canonDir.getParent();
     return (parent != null) && 
            (mkdirsWithExistsCheck(new File(parent)) &&
+                                       // 此处为什么还在判断一次??
+                                       // 与dir.mkdir() || dir.exists()有啥不同?
                                       (canonDir.mkdir() || canonDir.exists()));
   }
   
   /**
    * Create the directory if it doesn't exist and 
+   * 如果不存在，则建立目录。
    * @param dir
    * @throws DiskErrorException
    */
-  public static void checkDir(File dir) throws DiskErrorException {
+  public static void checkDir(File dir) throws DiskErrorException {    
+    // 如果不存在，则建立目录。建立目录失败，就抛出异常
     if (!mkdirsWithExistsCheck(dir))
       throw new DiskErrorException("can not create directory: " 
                                    + dir.toString());
-        
+    // ---------------- 建立成功后 ---------------- 
+ 
+    // 如果它不是一个目录(例如，是一个文件)，则抛出异常    
     if (!dir.isDirectory())
       throw new DiskErrorException("not a directory: " 
                                    + dir.toString());
-            
+    // 如果不能读，则抛出异常    
     if (!dir.canRead())
       throw new DiskErrorException("directory is not readable: " 
                                    + dir.toString());
-            
+    // 如果不能写，则抛出异常            
     if (!dir.canWrite())
       throw new DiskErrorException("directory is not writable: " 
                                    + dir.toString());

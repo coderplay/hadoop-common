@@ -40,7 +40,9 @@ import org.apache.hadoop.util.Shell.ShellCommandExecutor;
  * up of tasks, as also the launching and killing task JVMs.
  * Subclasses of this class will implement the logic required for
  * performing the actual actions.
- * 
+ * <p>
+ * 控制任务的初始化、结束及清理，以及启动和杀死任务JVM.
+ * 见https://issues.apache.org/jira/browse/HADOOP-4490
  * <br/>
  * 
  * NOTE: This class is internal only class and not intended for users!!

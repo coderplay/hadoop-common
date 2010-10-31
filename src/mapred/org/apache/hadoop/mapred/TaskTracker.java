@@ -117,6 +117,8 @@ import org.apache.hadoop.security.Credentials;
  * in a networked environment.  It contacts the JobTracker
  * for Task assignments and reporting results.
  * 
+ * TT是一个在网络环境里启动和跟踪MR任务的进程. 它与JT联系，
+ * 主要联系内容是任务分配和报告结果.
  *******************************************************/
 public class TaskTracker 
              implements MRConstants, TaskUmbilicalProtocol, Runnable {
@@ -589,6 +591,9 @@ public class TaskTracker
    * Do the real constructor work here.  It's in a separate method
    * so we can call it again and "recycle" the object after calling
    * close().
+   * 
+   * 此方法做了真正的构造工作。之所以让它成为一个独立的方法，是因为我们
+   * 可以重新调用它，方便在调用close()之后回收对象。
    */
   synchronized void initialize() throws IOException, InterruptedException {
     this.fConf = new JobConf(originalConf);
@@ -612,6 +617,7 @@ public class TaskTracker
     fConf.deleteLocalFiles(SUBDIR);
 
     // Clear out state tables
+    // 清空状态表。TT所承接的任务全部清除，重置正在运行任务表和正在运行作业表。
     this.tasks.clear();
     this.runningTasks = new LinkedHashMap<TaskAttemptID, TaskInProgress>();
     this.runningJobs = new TreeMap<JobID, RunningJob>();
@@ -624,7 +630,7 @@ public class TaskTracker
     this.minSpaceKill = this.fConf.getLong("mapred.local.dir.minspacekill", 0L);
     //tweak the probe sample size (make it a function of numCopiers)
     probe_sample_size = this.fConf.getInt("mapred.tasktracker.events.batchsize", 500);
-    
+    //　初始化度量工具
     Class<? extends TaskTrackerInstrumentation> metricsInst = getInstrumentationClass(fConf);
     try {
       java.lang.reflect.Constructor<? extends TaskTrackerInstrumentation> c =
@@ -675,9 +681,13 @@ public class TaskTracker
         taskReportAddress.getHostName() + ":" + taskReportAddress.getPort());
     LOG.info("TaskTracker up at: " + this.taskReportAddress);
 
+    // TT的名称 = tracker_本地机器名_taskReportAddress
     this.taskTrackerName = "tracker_" + localHostname + ":" + taskReportAddress;
     LOG.info("Starting tracker " + taskTrackerName);
 
+    // -------------------------------------------------------------------
+    // Task Controller
+    // -------------------------------------------------------------------
     Class<? extends TaskController> taskControllerClass = fConf.getClass(
         "mapred.task.tracker.task-controller", DefaultTaskController.class, TaskController.class);
     taskController = (TaskController) ReflectionUtils.newInstance(
@@ -703,6 +713,7 @@ public class TaskTracker
     this.justInited = true;
     this.running = true;    
     // start the thread that will fetch map task completion events
+    // 这是TT非常重要的线程,它获取Map任务完成事件
     this.mapEventsFetcher = new MapEventsFetcherThread();
     mapEventsFetcher.setDaemon(true);
     mapEventsFetcher.setName(
@@ -725,10 +736,17 @@ public class TaskTracker
     setLocalizer(new Localizer(localFs, fConf.getLocalDirs(), taskController));
 
     //Start up node health checker service.
+    //　启动节点健康检查的服务线程
     if (shouldStartHealthMonitor(this.fConf)) {
       startHealthMonitor(this.fConf);
     }
     
+    // 传输层协议使用带外数据(out-of-band,OOB)来发送一些重要的数据,如果通信一方有重要的数据需要通知对方时,协议能够将这些数据快速地
+    // 发送到对方. 为了发送这些数据,协议一般不使用与普通数据相同的通道,而是使用另外的通道. Linux系统的套接字机制支持低层协议发送和
+    // 接受带外数据. 但是TCP协议没有真正意义上的带外数据.为了发送重要协议,TCP提供了一种称为紧急模式(urgentmode)的机制.TCP协议在数
+    // 据段中设置URG位,表示进入紧急模式.接收方可以对紧急模式采取特殊的处理.很容易看出来,这种方式数据不容易被阻塞,可以通过在我们的服
+    // 务器端程序里面捕捉SIGURG信号来及时接受数据或者使用带OOB标志的recv函数来接受.
+    // 这里的out-of-band heartbeat是指紧急的心跳. 见MAPREDUCE-270
     oobHeartbeatOnTaskCompletion = 
       fConf.getBoolean(TT_OUTOFBAND_HEARBEAT, false);
   }
@@ -1269,6 +1287,7 @@ public class TaskTracker
 
   /**
    * Start with the local machine name, and the default JobTracker
+   * 以本地机器名启动, 连接默认的JT
    */
   public TaskTracker(JobConf conf) throws IOException, InterruptedException {
     originalConf = conf;
@@ -1384,6 +1403,7 @@ public class TaskTracker
 
   /**
    * Main service loop.  Will stay in this loop forever.
+   * 如果TT正常，则应该永远在这个循环里。
    */
   State offerService() throws Exception {
     long lastHeartbeat = 0;
@@ -1392,6 +1412,7 @@ public class TaskTracker
       try {
         long now = System.currentTimeMillis();
 
+        //　如果还没到心跳时间,则先等待一会儿
         long waitTime = heartbeatInterval - (now - lastHeartbeat);
         if (waitTime > 0) {
           // sleeps for the wait time or 
@@ -1407,6 +1428,9 @@ public class TaskTracker
         // If the TaskTracker is just starting up:
         // 1. Verify the buildVersion
         // 2. Get the system directory & filesystem
+        // TT刚启动时做了两件事: 
+        // 1. 验证TT版本号，得与JT的版本号一致
+        // 2. 获取系统目录和系统目录所属的文件系统
         if(justInited) {
           String jobTrackerBV = jobClient.getBuildVersion();
           if(!VersionInfo.getBuildVersion().equals(jobTrackerBV)) {
@@ -1431,6 +1455,7 @@ public class TaskTracker
         }
         
         // Send the heartbeat and process the jobtracker's directives
+        // 发送心跳给JT
         HeartbeatResponse heartbeatResponse = transmitHeartBeat(now);
 
         // Note the time when the heartbeat returned, use this to decide when to send the
@@ -1439,6 +1464,7 @@ public class TaskTracker
         
         
         // Check if the map-event list needs purging
+        // 检查看看是否map事件列表需要截剪
         Set<JobID> jobs = heartbeatResponse.getRecoveredJobs();
         if (jobs.size() > 0) {
           synchronized (this) {
@@ -1548,12 +1574,16 @@ public class TaskTracker
 
   /**
    * Build and transmit the heart beat to the JobTracker
+   * <p>
+   * 创建和发送心跳给JT
    * @param now current time
    * @return false if the tracker was unknown
    * @throws IOException
    */
   HeartbeatResponse transmitHeartBeat(long now) throws IOException {
     // Send Counters in the status once every COUNTER_UPDATE_INTERVAL
+    // 每隔COUNTER_UPDATE_INTERVAL毫秒，发送一次counters状态给JT.
+    // sendCounters用来判断这次是否要发送
     boolean sendCounters;
     if (now > (previousUpdate + COUNTER_UPDATE_INTERVAL)) {
       sendCounters = true;
@@ -1567,7 +1597,8 @@ public class TaskTracker
     // Check if the last heartbeat got through... 
     // if so then build the heartbeat information for the JobTracker;
     // else resend the previous status information.
-    //
+    // 检查看看上一个心跳是否已经顺利通过
+    // 如果是，则为JT建立当前心跳的状态信息;如果不是，则重新发送上一个状态信息
     if (status == null) {
       synchronized (this) {
         status = new TaskTrackerStatus(taskTrackerName, localHostname, 
@@ -1585,7 +1616,10 @@ public class TaskTracker
       
     //
     // Check if we should ask for a new Task
-    //
+    // 检查一下，我们是否要请求新的任务
+    // 1. 检查已经占用的Map slots或Reduce slots数是否小于预设值
+    // 2. 看看本地的磁盘空间是否大于minSpaceStart
+    // 满足以上两点，就可以向JT申请新的任务了
     boolean askForNewTask;
     long localMinSpaceStart;
     synchronized (this) {
@@ -1598,10 +1632,13 @@ public class TaskTracker
     if (askForNewTask) {
       checkLocalDirs(fConf.getLocalDirs());
       askForNewTask = enoughFreeSpace(localMinSpaceStart);
+
+      // 获取TT的空闲磁盘容量、虚拟内存总量、物理内存总量、Map&Reduce slot的内存大小
+      // 设置到心跳状态信息里
       long freeDiskSpace = getFreeSpace();
       long totVmem = getTotalVirtualMemoryOnTT();
       long totPmem = getTotalPhysicalMemoryOnTT();
-
+      
       status.getResourceStatus().setAvailableSpace(freeDiskSpace);
       status.getResourceStatus().setTotalVirtualMemory(totVmem);
       status.getResourceStatus().setTotalPhysicalMemory(totPmem);
@@ -1610,8 +1647,9 @@ public class TaskTracker
       status.getResourceStatus().setReduceSlotMemorySizeOnTT(
           reduceSlotSizeMemoryOnTT);
     }
+
     //add node health information
-    
+    // 在心跳状态信息里加入节点的健康信息
     TaskTrackerHealthStatus healthStatus = status.getHealthStatus();
     synchronized (this) {
       if (healthChecker != null) {
@@ -1624,6 +1662,7 @@ public class TaskTracker
     }
     //
     // Xmit the heartbeat
+    // 发送心跳给JT。实质上它是一个RPC调用，它调用JT的心跳方法。
     //
     HeartbeatResponse heartbeatResponse = jobClient.heartbeat(status, 
                                                               justStarted,
@@ -1633,7 +1672,7 @@ public class TaskTracker
       
     //
     // The heartbeat got through successfully!
-    //
+    // 如果正常的话，心跳应该被JT通过，并返回一个响应ID
     heartbeatResponseId = heartbeatResponse.getResponseId();
       
     synchronized (this) {
@@ -2230,6 +2269,7 @@ public class TaskTracker
    * This while-loop attempts to connect to the JobTracker.  It only 
    * loops when the old TaskTracker has gone bad (its state is
    * stale somehow) and we need to reinitialize everything.
+   * 
    */
   public void run() {
     try {
@@ -3380,6 +3420,8 @@ public class TaskTracker
    */
   private static void checkLocalDirs(String[] localDirs) 
     throws DiskErrorException {
+    // 这个方法只有当所有的本地目录都检查失败时才抛出DiskErrorException
+    // 如果只是其中一些本地目录检查失败，则给出警告记在日志
     boolean writable = false;
         
     if (localDirs != null) {
@@ -3408,6 +3450,7 @@ public class TaskTracker
     
   /**
    * Start the TaskTracker, point toward the indicated JobTracker
+   * 启动TT,指向指定的JT
    */
   public static void main(String argv[]) throws Exception {
     StringUtils.startupShutdownMessage(TaskTracker.class, argv, LOG);
@@ -3418,8 +3461,10 @@ public class TaskTracker
     try {
       JobConf conf=new JobConf();
       // enable the server to track time spent waiting on locks
+      // 启动服务器跟踪花在等待锁的时间.
       ReflectionUtils.setContentionTracing
         (conf.getBoolean("tasktracker.contention.tracking", false));
+      // 启动了一个TT
       new TaskTracker(conf).run();
     } catch (Throwable e) {
       LOG.error("Can not start task tracker because "+
