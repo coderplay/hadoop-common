@@ -116,7 +116,7 @@ import org.apache.hadoop.security.Credentials;
  * TaskTracker is a process that starts and tracks MR Tasks
  * in a networked environment.  It contacts the JobTracker
  * for Task assignments and reporting results.
- *
+ * 
  *******************************************************/
 public class TaskTracker 
              implements MRConstants, TaskUmbilicalProtocol, Runnable {
@@ -690,6 +690,7 @@ public class TaskTracker
     this.distributedCacheManager = new TrackerDistributedCacheManager(
         this.fConf, taskController);
 
+    // TT做为JT的client
     this.jobClient = (InterTrackerProtocol) 
     UserGroupInformation.getLoginUser().doAs(
         new PrivilegedExceptionAction<Object>() {
@@ -1277,6 +1278,7 @@ public class TaskTracker
                   "mapred.tasktracker.reduce.tasks.maximum", 2);
     aclsManager = new ACLsManager(conf, new JobACLsManager(conf), null);
     this.jobTrackAddr = JobTracker.getAddress(conf);
+    // TT 的 webui 服务器, 40个服务线程
     String infoAddr = 
       NetUtils.getServerAddress(conf,
                                 "tasktracker.http.bindAddress", 

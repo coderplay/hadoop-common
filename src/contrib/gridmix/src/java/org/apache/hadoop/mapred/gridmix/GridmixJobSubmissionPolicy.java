@@ -28,6 +28,7 @@ import java.io.IOException;
 
 enum GridmixJobSubmissionPolicy {
 
+  // REPLAY每隔320000询问一次状态
   REPLAY("REPLAY",320000) {
     @Override
     public JobFactory<ClusterStats> createJobFactory(

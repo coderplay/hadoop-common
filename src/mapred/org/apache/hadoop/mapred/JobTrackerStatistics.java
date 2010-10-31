@@ -24,7 +24,7 @@ import org.apache.hadoop.mapred.StatisticsCollector.Stat;
 
 /**
  * Collects the job tracker statistics.
- *
+ * 收集job tracker的统计
  */
 class JobTrackerStatistics {
 

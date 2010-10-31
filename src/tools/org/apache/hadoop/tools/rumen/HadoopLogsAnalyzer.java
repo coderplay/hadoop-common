@@ -1785,6 +1785,11 @@ public class HadoopLogsAnalyzer extends Configured implements Tool {
    * 
    *          collects all the line types and prints the first example of each
    *          one
+   *          
+   *          最后一个参数为输入文件。文件可以是一个目录，此时你可以顺序获得所有文件。
+   *          我们解压以.gz为后缀的文件。
+   *          
+   *          
    */
   public static void main(String[] args) {
     try {

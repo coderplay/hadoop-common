@@ -113,7 +113,14 @@ import org.apache.hadoop.security.Credentials;
 /*******************************************************
  * JobTracker is the central location for submitting and 
  * tracking MR jobs in a network environment.
- *
+ * 
+ * JobTracker的职责有四个: 
+ * 1. InterTrackerProtocol 作为TaskTracker的统领, 用心跳协
+ *    调各个TT
+ * 2. JobSubmissionProtocol 处理JobClient的作业提交请求
+ * 3. TaskTrackerManager 管理集群各TT的信息, 貌似初始化/杀
+ *    死作业也在这儿
+ * 4. RefreshAuthorizationPolicyProtocol 认证策略
  *******************************************************/
 public class JobTracker implements MRConstants, InterTrackerProtocol,
     JobSubmissionProtocol, TaskTrackerManager, RefreshUserMappingsProtocol,
@@ -1849,19 +1856,19 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
 
   //
   // Properties to maintain while running Jobs and Tasks:
-  //
+  // 运行作业和任务时需要维护的属性
   // 1.  Each Task is always contained in a single Job.  A Job succeeds when all its 
   //     Tasks are complete.
-  //
+  //     每项任务通常属于一道作业。当其所有任务都完成时，作业才成功。
   // 2.  Every running or successful Task is assigned to a Tracker.  Idle Tasks are not.
-  //
+  //     每项正在运行的或成功的任务被派发给一个TT. 空闲的任务则不是。
   // 3.  When a Tracker fails, all of its assigned Tasks are marked as failures.
-  //
+  //     当一个TT发生故障时，其所有被分配的任务都标记为失败.
   // 4.  A Task might need to be reexecuted if it (or the machine it's hosted on) fails
   //     before the Job is 100% complete.  Sometimes an upstream Task can fail without
   //     reexecution if all downstream Tasks that require its output have already obtained
   //     the necessary files.
-  //
+  //     任务如果失败，则需要在作业100%完成前重行执行。
 
   // All the known jobs.  (jobid->JobInProgress)
   Map<JobID, JobInProgress> jobs =  
@@ -2173,6 +2180,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     while (!Thread.currentThread().isInterrupted()) {
       try {
         // if we haven't contacted the namenode go ahead and do it
+        // 如果我们还没有与nn取得联系, 则开始取得联系
         if (fs == null) {
           fs = getMROwner().doAs(new PrivilegedExceptionAction<FileSystem>() {
             public FileSystem run() throws IOException {
@@ -3652,6 +3660,11 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
    * and JobStatus.  Those two sub-objects are sometimes shipped outside
    * of the JobTracker.  But JobInProgress adds info that's useful for
    * the JobTracker alone.
+   * <p>
+   * 
+   * JobTracker.submitJob() 产生一道新的作业。
+   * 创建一个JIP对象, 它包含了 JobProfile和JobStatus。 这两个子对象有时候在
+   * JobTracker之外传递, 而JIP加了点信息，只为JT服务。
    */
   public JobStatus submitJob(JobID jobId, String jobSubmitDir, Credentials ts)
       throws IOException {
@@ -3745,6 +3758,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   /**
    * Adds a job to the jobtracker. Make sure that the checks are inplace before
    * adding a job. This is the core job submission logic
+   * 加作业加入至JT. 确保加入作业之前做过检查。这是作业提交逻辑的核心代码。
    * @param jobId The id for the job submitted which needs to be added
    */
   private synchronized JobStatus addJob(JobID jobId, JobInProgress job) {

@@ -216,6 +216,7 @@ public class FairScheduler extends TaskScheduler {
       return null;
     
     // Reload allocations file if it hasn't been loaded in a while
+    // 如果之前没有加载， 则重新加载分配文件
     poolMgr.reloadAllocsIfNecessary();
     
     // Compute total runnable maps and reduces

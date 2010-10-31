@@ -102,7 +102,7 @@ class JobSubmitter implements Gridmix.Component<GridmixJob> {
           nsDelay = job.getDelay(TimeUnit.NANOSECONDS);
         }
         try {
-          // submit job
+          // submit job 提交作业
           monitor.add(job.call());
           statistics.addJobStats(job.getJob(), job.getJobDesc());
           LOG.debug("SUBMIT " + job + "@" + System.currentTimeMillis() +

@@ -82,6 +82,17 @@ import org.apache.hadoop.util.StringUtils;
  * Version 1 : Changes the line delimiter to '.'
                Values are now escaped for unambiguous parsing. 
                Added the Meta tag to store version info.
+   
+ * 提供作业历史的读和写。作业历史以追加的形式工作。JobHistory与其内部类提供了记录作业事件的方法。
+ * JobHistory分割成多个文件， 每个文件的格式是纯文本格式。每行的格式是  [type (key=value)*],其中
+ * type代表该条记录的类型。type映射了其中一子类的UID.
+ * 
+ * 作业历史由一个主索引维护。此索引包含了所有作业的开始/停止时间，还有少量的作业级别属性。
+ * 除了这些索引，每道作业的历史保存在独立的历史文件当中。这些文件的名称都依照如下格式: 
+ * jobtrackerId_jobid
+ * 
+ * 为了解析作业历史，它支持了一种监听器的接口。每行历史记录被解析好之后发给监听器。监听器可以建立
+ * 一个作业历史的对象模型或者查找指定的历史事件，丢弃其余的事件。
  */
 public class JobHistory {
   
@@ -313,23 +324,28 @@ public class JobHistory {
   }
 
   /**
-   * Initialize JobHistory files. 
+   * Initialize JobHistory files.
    * @param conf Jobconf of the job tracker.
    * @param hostname jobtracker's hostname
    * @param jobTrackerStartTime jobtracker's start time
    * @return true if intialized properly
    *         false otherwise
+   *  
+   *  初始化JobHistory文件
    */
   public static boolean init(JobTracker jobTracker, JobConf conf,
              String hostname, long jobTrackerStartTime){
     try {
+      // 作业历史目录可以是一个hdfs路径
       LOG_DIR = conf.get("hadoop.job.history.location" ,
         "file:///" + new File(
         System.getProperty("hadoop.log.dir")).getAbsolutePath()
         + File.separator + "history");
+      // JT的唯一标识: 主机名_JT启动时间_
       JOBTRACKER_UNIQUE_STRING = hostname + "_" + 
                                     String.valueOf(jobTrackerStartTime) + "_";
       jobtrackerHostname = hostname;
+      // 在conf设置的文件系统上, 建立作业历史目录
       Path logDir = new Path(LOG_DIR);
       LOGDIR_FS = logDir.getFileSystem(conf);
       if (!LOGDIR_FS.exists(logDir)){
@@ -349,6 +365,7 @@ public class JobHistory {
       aclsEnabled = conf.getBoolean(JobConf.MR_ACLS_ENABLED, false);
 
       // initialize the file manager
+      // 初始化作业历史文件管理器
       fileManager = new JobHistoryFilesManager(conf, jobTracker);
     } catch(IOException e) {
         LOG.error("Failed to initialize JobHistory log file", e); 
@@ -360,6 +377,7 @@ public class JobHistory {
   static boolean initDone(JobConf conf, FileSystem fs){
     try {
       //if completed job history location is set, use that
+      // 如果配置中设置了已完成作业历史的路径，使用它。
       String doneLocation = conf.
                        get("mapred.job.tracker.history.completed.location");
       if (doneLocation != null) {
@@ -372,6 +390,7 @@ public class JobHistory {
 
       //If not already present create the done folder with appropriate 
       //permission
+      // 如果没有设置,建立一个有合适权限的完成目录
       if (!DONEDIR_FS.exists(DONE)) {
         LOG.info("Creating DONE folder at "+ DONE);
         if (! DONEDIR_FS.mkdirs(DONE, 
@@ -379,7 +398,7 @@ public class JobHistory {
           throw new IOException("Mkdirs failed to create " + DONE.toString());
         }
       }
-
+      // 启动文件管理器
       fileManager.start();
     } catch(IOException e) {
         LOG.error("Failed to initialize JobHistory log file", e); 
@@ -393,6 +412,8 @@ public class JobHistory {
    * Manages job-history's meta information such as version etc.
    * Helps in logging version information to the job-history and recover
    * version information from the history. 
+   * 管理作业历史的元信息,例如版本信息。
+   * 
    */
   static class MetaInfoManager implements Listener {
     private long version = 0L;
@@ -555,6 +576,8 @@ public class JobHistory {
    * @param recordType type of log event
    * @param keys type of log event
    * @param values type of log event
+   * 
+   * 记录一组key和value. keys的长度应与values的长度一样.
    */
 
   static void log(ArrayList<PrintWriter> writers, RecordTypes recordType, 
@@ -568,6 +591,7 @@ public class JobHistory {
       length += values[i].length() + keys[i].toString().length();
     }
 
+    // 为什么要先计算buffer的length, 是不是得不偿失呢? 
     // We have the length of the buffer, now construct it.
     StringBuilder builder = new StringBuilder(length);
     builder.append(recordType.name());
