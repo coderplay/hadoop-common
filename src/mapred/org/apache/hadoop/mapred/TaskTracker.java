@@ -119,6 +119,14 @@ import org.apache.hadoop.security.Credentials;
  * 
  * TT是一个在网络环境里启动和跟踪MR任务的进程. 它与JT联系，
  * 主要联系内容是任务分配和报告结果.
+ * 
+ * TaskTracker的几个专门处理任务的线程:<>
+ * 1. 启动新任务的线程TaskLauncher, TT会在初始化(见{@link 
+ *    #initialize()})的时候初始化两个线程mapLauncher及reduce-
+ *    Launcher, 分别用来启动map和reduce任务
+ * 2. 清除任务的线程 taskCleanupThread
+ *     另外成功完成的作业，由Task所在的jvm子进程向TT发起提交请
+ * 求。TT认为可以提交了，则此子进程开始提交工作，即保存它的输出。
  *******************************************************/
 public class TaskTracker 
              implements MRConstants, TaskUmbilicalProtocol, Runnable {
@@ -386,6 +394,7 @@ public class TaskTracker
     
   /**
    * A daemon-thread that pulls tips off the list of things to cleanup.
+   * 这个后台线程专门用来清理tasksToCleanup列表里的任务
    */
   private Thread taskCleanupThread = 
     new Thread(new Runnable() {
@@ -726,7 +735,7 @@ public class TaskTracker
     getUserLogManager().clearOldUserLogs(fConf);
 
     setIndexCache(new IndexCache(this.fConf));
-
+    // 这两个线程分别用来启动map、reduce任务
     mapLauncher = new TaskLauncher(TaskType.MAP, maxMapSlots);
     reduceLauncher = new TaskLauncher(TaskType.REDUCE, maxReduceSlots);
     mapLauncher.start();
@@ -1460,11 +1469,13 @@ public class TaskTracker
 
         // Note the time when the heartbeat returned, use this to decide when to send the
         // next heartbeat   
+        // 记录心跳返回的时间，用这个时间来决定何时发送下次心跳
         lastHeartbeat = System.currentTimeMillis();
         
         
         // Check if the map-event list needs purging
         // 检查看看是否map事件列表需要截剪
+        // 如果需要恢复的作业已经在TT的当前运行作业列表里，则截剪掉
         Set<JobID> jobs = heartbeatResponse.getRecoveredJobs();
         if (jobs.size() > 0) {
           synchronized (this) {
@@ -1496,25 +1507,44 @@ public class TaskTracker
           }
         }
         
+        // JT已经给了指示,这些指示封装成一组TaskTrackerAction传给TT.
+        // TT在心跳返回时接收到了这些指示.接下来TT处理这些指示.
+        //
+        // 这些指示(TaskTrackerAction)的类型有以下几种: 
+        // 1. LAUNCH_TASK, 启动一项新任务
+        // 2. KILL_TASK, 杀死一项任务
+        // 3. KILL_JOB, 杀死一道作业在此TT上运行的所有任务
+        // 4. REINIT_TRACKER, JT指示TT重置自己
+        // 5. COMMIT_TASK, 提交一项已经完成的任务,即让任务保存它的输出
+        // 
+        // TT首先看看JT是否指示TT直接重置自己,如果是,则TT立马重置,不用再处理其它指示。
+        // 如果不是, TT则处理一些常规的指示LAUNCH_TASK、COMMIT_TASK、KILL_TASK及KILL_JOB
         TaskTrackerAction[] actions = heartbeatResponse.getActions();
         if(LOG.isDebugEnabled()) {
           LOG.debug("Got heartbeatResponse from JobTracker with responseId: " + 
                     heartbeatResponse.getResponseId() + " and " + 
                     ((actions != null) ? actions.length : 0) + " actions");
         }
+        // 首先看看JT的指示是否直接重置这个TT
         if (reinitTaskTracker(actions)) {
           return State.STALE;
         }
             
         // resetting heartbeat interval from the response.
+        // 依据响应信息,重置心跳间隔
         heartbeatInterval = heartbeatResponse.getHeartbeatInterval();
         justStarted = false;
         justInited = false;
+        // TT在这儿处理JT指示。如果指示数组不为空，则遍历所有指示并一项一项地处理。
         if (actions != null){ 
           for(TaskTrackerAction action: actions) {
             if (action instanceof LaunchTaskAction) {
+              // JT指示TT启动一项新任务, TT将指示加入到任务队列里面
               addToTaskQueue((LaunchTaskAction)action);
             } else if (action instanceof CommitTaskAction) {
+              // JT指示TT提交一项已经完成的任务
+              // TT先判断一下commitResponses列表里是否已经存在这项任务的ID
+              // 如果不存在,就把任务ID添加至commitResponses
               CommitTaskAction commitAction = (CommitTaskAction)action;
               if (!commitResponses.contains(commitAction.getTaskID())) {
                 LOG.info("Received commit task action for " + 
@@ -1522,11 +1552,16 @@ public class TaskTracker
                 commitResponses.add(commitAction.getTaskID());
               }
             } else {
+              // JT指示为KILL_TASK或KILL_JOB, 则将指示加入到清除队列里
               tasksToCleanup.put(action);
             }
           }
         }
+        // 杀死那些最近X秒没有报告进度的任务
         markUnresponsiveTasks();
+        // 检查我们是否处于低磁盘空间的危险状况. 如果是, 杀死作业以腾出空间
+        // 同时确保我们不再受理新的任务. 首先尝试杀死reduce作业, 因为我相信 
+        // 它们使用了大部分空间, 然后选择杀死进度最慢的那个.
         killOverflowingTasks();
             
         //we've cleaned up, resume normal operation
@@ -1941,6 +1976,9 @@ public class TaskTracker
    * Try killing the reduce jobs first, since I believe they
    * use up most space
    * Then pick the one with least progress
+   * 检查我们是否处于低磁盘空间的危险状况. 如果是, 杀死作业以腾出空间
+   * 同时确保我们不再受理的作业. 首先尝试杀死reduce作业, 因为我相信它
+   * 们使用了大部分空间, 然后选择杀死进度最慢的那个.
    */
   private void killOverflowingTasks() throws IOException {
     long localMinSpaceKill;
@@ -2066,7 +2104,10 @@ public class TaskTracker
       reduceLauncher.addToTaskQueue(action);
     }
   }
-  
+
+  /**
+   * 这个线程用来启动新的任务。
+   */
   class TaskLauncher extends Thread {
     private IntWritable numFreeSlots;
     private final int maxSlots;
@@ -2119,10 +2160,12 @@ public class TaskTracker
           TaskInProgress tip;
           Task task;
           synchronized (tasksToLaunch) {
+            // 如果没有任务要启动,则线程一直处于等待状态
             while (tasksToLaunch.isEmpty()) {
               tasksToLaunch.wait();
             }
             //get the TIP
+            // 如果已经有任务在列表之上了,则取出队头的的那个任务. 
             tip = tasksToLaunch.remove(0);
             task = tip.getTask();
             LOG.info("Trying to launch : " + tip.getTask().getTaskID() + 
@@ -2131,6 +2174,9 @@ public class TaskTracker
           //wait for free slots to run
           synchronized (numFreeSlots) {
             boolean canLaunch = true;
+            // 一般情况下每任任务的numSlotsRequired都固定为1, 只有Yahoo!
+            // 的Capacity Scheduler才会改变这个值. 见CapacityTaskScheduler.
+            // .preInitializeJob()
             while (numFreeSlots.get() < task.getNumSlotsRequired()) {
               //Make sure that there is no kill task action for this task!
               //We are not locking tip here, because it would reverse the
@@ -2141,6 +2187,14 @@ public class TaskTracker
               // synchronized on numFreeSlots. So, while we are doing the check,
               // if the tip is half way through the kill(), we don't miss
               // notification for the following wait().
+              // 确保JT没有指示TT杀死这项任务,即判断这个任务不能处于UNASSIGNED、
+              // FAILED_UNCLEAN、KILLED_UNCLEAN三种状态其一。
+              // 我们在这儿不锁住tip, 因为会逆转加锁的顺序	。而且在这儿，我们没有必要
+              // 加锁,因为: 
+              // 1. TaskStatus的runState是volatile的
+              // 2. 任何通知都不会丢失，因为通知是同步在numFreeSlots之上。 所以,当我们
+              //    作检查时, 如果tip正在进行kill(), 因为我们对numFreeSlots加了wait(),
+              //    所以我们不会丢失通知.
               if (!tip.canBeLaunched()) {
                 //got killed externally while still in the launcher queue
                 LOG.info("Not blocking slots for " + task.getTaskID()
@@ -2207,6 +2261,7 @@ public class TaskTracker
    * Start a new task.
    * All exceptions are handled locally, so that we don't mess up the
    * task tracker.
+   * 启动新的任务. 所有的异常都在此方法内部被消化, 不用麻烦TT.
    */
   void startNewTask(TaskInProgress tip) {
     try {
@@ -2228,6 +2283,7 @@ public class TaskTracker
         
       // Careful! 
       // This might not be an 'Exception' - don't handle 'Error' here!
+      // 如果出现严重问题, 这个方法兜不住了,只能抛出去
       if (e instanceof Error) {
         throw ((Error) e);
       }
@@ -2304,6 +2360,10 @@ public class TaskTracker
         }
         if (shuttingDown) { return; }
         LOG.warn("Reinitializing local state");
+        // 以下这行码会重新初始化TT. 在TT的状态为DENIED时,它会重新初始化TT.
+        // 然后执行外层while循环判断, 发现denied为true. 退出了while. 最后
+        // shutdown TT. 其实这里是不需要的, TT为DENIED时应当直接shutdown
+        // TT, 不应当再做初始化的无用工作.
         initialize();
       }
       if (denied) {

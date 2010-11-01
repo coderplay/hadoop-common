@@ -870,6 +870,8 @@ abstract public class Task implements Writable, Configurable {
     int retries = MAX_RETRIES;
     while (true) {
       try {
+        // 一直询问TT, 这项任务是否可以提交了. 
+        // 如果不能则睡1秒，如果能则由committer提交任务
         while (!umbilical.canCommit(taskId)) {
           try {
             Thread.sleep(1000);
