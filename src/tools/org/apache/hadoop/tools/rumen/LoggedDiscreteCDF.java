@@ -27,6 +27,7 @@ import java.util.List;
  * 
  * All of the public methods are simply accessors for the instance variables we
  * want to write out in the JSON files.
+ * 累积分布函数的离散逼近
  * 
  */
 public class LoggedDiscreteCDF implements DeepCompare {

@@ -25,6 +25,8 @@ import org.apache.hadoop.hdfs.protocol.Block;
  * This class maintains the map from a block to its metadata.
  * block's metadata currently includes INode it belongs to and
  * the datanodes that store the block.
+ * 此类维护从block到它的元数据的映射关系. block的元数据当前包括它所属的INode,
+ * 和存储此block的DNs.
  */
 class BlocksMap {
         
@@ -41,6 +43,9 @@ class BlocksMap {
      * and triplets[3*i+1] and triplets[3*i+2] are references 
      * to the previous and the next blocks, respectively, in the 
      * list of blocks belonging to this data-node.
+     * triplets[3*i] 是对DatanodeDescriptor的引用
+     * triplets[3*i+1] and triplets[3*i+2] 分别是同属于此datanode
+     * 的所有block的list中, 前一个block和下一个block的引用
      */
     private Object[] triplets;
 
@@ -307,6 +312,7 @@ class BlocksMap {
 
   /**
    * Add BlockInfo if mapping does not exist.
+   * 如果映射中不存在,则加入BlockInfo
    */
   private BlockInfo checkBlockInfo(Block b, int replication) {
     BlockInfo info = map.get(b);
@@ -317,6 +323,7 @@ class BlocksMap {
     return info;
   }
 
+  // 获取Inode
   INodeFile getINode(Block b) {
     BlockInfo info = map.get(b);
     return (info != null) ? info.inode : null;
@@ -335,6 +342,8 @@ class BlocksMap {
    * Remove INode reference from block b.
    * If it does not belong to any file and data-nodes,
    * then remove the block from the block map.
+   * 从block b中移除INode引用
+   * 如果此块不属于任何文件和DN, 则将此块从block map中移除
    */
   void removeINode(Block b) {
     BlockInfo info = map.get(b);

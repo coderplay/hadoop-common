@@ -97,6 +97,7 @@ import java.util.concurrent.TimeUnit;
               continue;
             }
             last = current;
+            // 放置submitter的作业历史队列
             submitter.add(
               jobCreator.createGridmixJob(
                 conf, initTime + Math.round(

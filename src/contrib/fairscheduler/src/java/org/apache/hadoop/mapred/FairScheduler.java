@@ -81,6 +81,7 @@ public class FairScheduler extends TaskScheduler {
     int runningReduces = 0;     // Reduces running at last update
     int neededMaps;             // Maps needed at last update
     int neededReduces;          // Reduces needed at last update
+    /* 作业在池保证的最小数量map任务数 */
     int minMaps = 0;            // Minimum maps as guaranteed by pool
     int minReduces = 0;         // Minimum reduces as guaranteed by pool
     double mapFairShare = 0;    // Fair share of map slots at last update
@@ -220,6 +221,7 @@ public class FairScheduler extends TaskScheduler {
     poolMgr.reloadAllocsIfNecessary();
     
     // Compute total runnable maps and reduces
+    // 遍历所有作业, 统计所有可运行(包含未调度的)的map和reduce作业总数
     int runnableMaps = 0;
     int runnableReduces = 0;
     for (JobInProgress job: infos.keySet()) {
@@ -334,7 +336,8 @@ public class FairScheduler extends TaskScheduler {
     // Remove non-running jobs
     synchronized(this){
       List<JobInProgress> toRemove = new ArrayList<JobInProgress>();
-      for (JobInProgress job: infos.keySet()) { 
+      // 遍历调度器所有的作业,移除掉已经完成、失败或被杀死的作业
+      for (JobInProgress job: infos.keySet()) {  
         int runState = job.getStatus().getRunState();
         if (runState == JobStatus.SUCCEEDED || runState == JobStatus.FAILED
           || runState == JobStatus.KILLED) {
@@ -347,6 +350,7 @@ public class FairScheduler extends TaskScheduler {
       }
       // Update running jobs with deficits since last update, and compute new
       // slot allocations, weight, shares and task counts
+      // 更新正在运行作业的
       long now = clock.getTime();
       long timeDelta = now - lastUpdateTime;
       updateDeficits(timeDelta);
@@ -374,10 +378,13 @@ public class FairScheduler extends TaskScheduler {
       info.runnable = false;
     }
     // Create a list of sorted jobs in order of start time and priority
+    // 先按优先级,再按开始时间, 建立有序的作业列表
     List<JobInProgress> jobs = new ArrayList<JobInProgress>(infos.keySet());
     Collections.sort(jobs, new FifoJobComparator());
     // Mark jobs as runnable in order of start time and priority, until
     // user or pool limits have been reached.
+    // 按序标记作业为可运行,直到到达该用户或组的限制 
+    // 超出了限制的作业,都被设为不可运行 info.runnable = false
     Map<String, Integer> userJobs = new HashMap<String, Integer>();
     Map<String, Integer> poolJobs = new HashMap<String, Integer>();
     for (JobInProgress job: jobs) {
@@ -403,6 +410,8 @@ public class FairScheduler extends TaskScheduler {
       if (job.getStatus().getRunState() != JobStatus.RUNNING)
         continue; // Job is still in PREP state and tasks aren't initialized
       // Count maps
+      // 遍历JIP中的所有TIP,确定该作业已经完成Map任务数、正在运行Map任务数
+      // 及需要调度的Map任务数
       int totalMaps = job.numMapTasks;
       int finishedMaps = 0;
       int runningMaps = 0;
@@ -417,7 +426,8 @@ public class FairScheduler extends TaskScheduler {
       info.runningMaps = runningMaps;
       info.neededMaps = (totalMaps - runningMaps - finishedMaps
           + taskSelector.neededSpeculativeMaps(job));
-      // Count reduces
+      // 遍历JIP中的所有TIP,确定该作业已经完成Reduce任务数、正在运行Reduce任务数
+      // 如果已经完成了足够多的Map任务，可以开始Reduce了，则计算需要调度的Reduce任务数
       int totalReduces = job.numReduceTasks;
       int finishedReduces = 0;
       int runningReduces = 0;
@@ -439,6 +449,9 @@ public class FairScheduler extends TaskScheduler {
       // If the job was marked as not runnable due to its user or pool having
       // too many active jobs, set the neededMaps/neededReduces to 0. We still
       // count runningMaps/runningReduces however so we can give it a deficit.
+      // 如果此作业因为它的用户或池已具有过多的活动作业而被标记为不可运行, 则把它的
+      // neededMaps/neededReduces都设为0. 但是我们仍然计算 runningMaps/
+      // runningReduces, 因为下一次可以给它计算deficit.
       if (!info.runnable) {
         info.neededMaps = 0;
         info.neededReduces = 0;
@@ -458,8 +471,16 @@ public class FairScheduler extends TaskScheduler {
     }
   }
 
+  /**
+   * 计算各作业的权重.
+   * 作业权重 = 作业原始权重 * 作业所在池的权重 / 池中所有作业的原始权重和,
+   * 其中 作业原始权重 = lg (需要调度的任务数 + 正在运行的任务数)* P(优先级),
+   * P(VERY_HIGH) = 4, P(HIGH) = 2, P(NORMAL) = 1,
+   * P(LOW) = 0.5, P(VERY_LOW) = 0.25
+   */
   private void updateWeights() {
     // First, calculate raw weights for each job
+    // 计算各作业的原始权重
     for (Map.Entry<JobInProgress, JobInfo> entry: infos.entrySet()) {
       JobInProgress job = entry.getKey();
       JobInfo info = entry.getValue();
@@ -467,6 +488,7 @@ public class FairScheduler extends TaskScheduler {
       info.reduceWeight = calculateRawWeight(job, TaskType.REDUCE);
     }
     // Now calculate job weight sums for each pool
+    // 然后计算各池的原始权重总和
     Map<String, Double> mapWeightSums = new HashMap<String, Double>();
     Map<String, Double> reduceWeightSums = new HashMap<String, Double>();
     for (Pool pool: poolMgr.getPools()) {
@@ -487,6 +509,7 @@ public class FairScheduler extends TaskScheduler {
     }
     // And normalize the weights based on pool sums and pool weights
     // to share fairly across pools (proportional to their weights)
+    // 归一化
     for (Map.Entry<JobInProgress, JobInfo> entry: infos.entrySet()) {
       JobInProgress job = entry.getKey();
       JobInfo info = entry.getValue();
@@ -519,6 +542,7 @@ public class FairScheduler extends TaskScheduler {
     // and redistribute any slots that are left over between jobs that still
     // need slots on the next pass. If, in total, the jobs in our pool don't
     // need all its allocation, we leave the leftover slots for general use.
+    // 
     PoolManager poolMgr = getPoolManager();
     for (Pool pool: poolMgr.getPools()) {
       for (final TaskType type: TaskType.values()) {
@@ -546,12 +570,14 @@ public class FairScheduler extends TaskScheduler {
           int oldSlots = slotsLeft; // Copy slotsLeft so we can modify it
           for (JobInProgress job: jobs) {
             double weight = weight(job, type);
+            // share = 该池空闲的slots数 * (此作业的权重/ 池中所有需运行任务作业的权重和) 
             int share = (int) Math.floor(oldSlots * weight / totalWeight);
             slotsLeft = giveMinSlots(job, type, slotsLeft, share);
           }
           if (slotsLeft == oldSlots) {
             // No tasks were assigned; do another pass using ceil, giving the
             // extra slots to jobs in order of weight then deficit
+            // 没有任务被分配; 使ceil趟
             List<JobInProgress> sortedJobs = new ArrayList<JobInProgress>(jobs);
             Collections.sort(sortedJobs, new Comparator<JobInProgress>() {
               public int compare(JobInProgress j1, JobInProgress j2) {
@@ -728,6 +754,9 @@ public class FairScheduler extends TaskScheduler {
     return taskType == TaskType.MAP ? info.runningMaps : info.runningReduces;
   }
 
+  /**
+   * 作业job可运行的任务数 =  待调度的任务数 + 正在运行的任务数
+   */
   protected int runnableTasks(JobInProgress job, TaskType type) {
     return neededTasks(job, type) + runningTasks(job, type);
   }

@@ -117,6 +117,7 @@ public interface DatanodeProtocol extends VersionedProtocol {
    * For example, whenever client code
    * writes a new Block here, or another DataNode copies a Block to
    * this DataNode, it will call blockReceived().
+   * 允许DN告诉NameNode最近接受的块数据, 
    */
   public void blockReceived(DatanodeRegistration registration,
                             Block blocks[],

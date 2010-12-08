@@ -94,6 +94,14 @@ private final UserGroupInformation ugi;
    * then the ancestor path is "/foo".
    * Further, if both foo and bar do not exist,
    * then the ancestor path is "/".
+   * 
+   * 例如有一个路径为"/foo/bar/baz".
+   * 不管baz是一个文件还是目录,
+   * 父路径是 "/foo/bar",
+   * 如果bar存在, 则祖路径也是"/foo/bar".
+   * 如果bar不存在但foo存在,
+   * 则祖路径是"/foo".
+   * 如果foo和bar都不存在,则祖路径是"/".
    *
    * @param doCheckOwner Require user to be the owner of the path?
    * @param ancestorAccess The access required by the ancestor of the path.

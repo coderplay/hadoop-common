@@ -23,8 +23,8 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.PrintWriter;
 import java.io.InputStreamReader;
+import java.io.PrintWriter;
 import java.io.Writer;
 import java.net.BindException;
 import java.net.InetSocketAddress;
@@ -60,13 +60,10 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.LocalDirAllocator;
+import org.apache.hadoop.fs.LocalFileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
-import org.apache.hadoop.mapred.JobSubmissionProtocol;
-import org.apache.hadoop.mapreduce.security.token.delegation.DelegationTokenIdentifier;
-import org.apache.hadoop.mapreduce.security.token.delegation.DelegationTokenSecretManager;
 import org.apache.hadoop.http.HttpServer;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.ipc.RPC;
@@ -80,6 +77,13 @@ import org.apache.hadoop.mapred.JobInProgress.KillInterruptedException;
 import org.apache.hadoop.mapred.JobStatusChangeEvent.EventType;
 import org.apache.hadoop.mapred.QueueManager.QueueACL;
 import org.apache.hadoop.mapred.TaskTrackerStatus.TaskTrackerHealthStatus;
+import org.apache.hadoop.mapreduce.ClusterMetrics;
+import org.apache.hadoop.mapreduce.TaskType;
+import org.apache.hadoop.mapreduce.security.token.DelegationTokenRenewal;
+import org.apache.hadoop.mapreduce.security.token.JobTokenSecretManager;
+import org.apache.hadoop.mapreduce.security.token.delegation.DelegationTokenIdentifier;
+import org.apache.hadoop.mapreduce.security.token.delegation.DelegationTokenSecretManager;
+import org.apache.hadoop.mapreduce.server.jobtracker.TaskTracker;
 import org.apache.hadoop.net.DNSToSwitchMapping;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.net.NetworkTopology;
@@ -87,6 +91,7 @@ import org.apache.hadoop.net.Node;
 import org.apache.hadoop.net.NodeBase;
 import org.apache.hadoop.net.ScriptBasedMapping;
 import org.apache.hadoop.security.AccessControlException;
+import org.apache.hadoop.security.Credentials;
 import org.apache.hadoop.security.Groups;
 import org.apache.hadoop.security.RefreshUserMappingsProtocol;
 import org.apache.hadoop.security.SecurityUtil;
@@ -102,13 +107,6 @@ import org.apache.hadoop.util.HostsFileReader;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
 import org.apache.hadoop.util.VersionInfo;
-
-import org.apache.hadoop.mapreduce.ClusterMetrics;
-import org.apache.hadoop.mapreduce.TaskType;
-import org.apache.hadoop.mapreduce.security.token.DelegationTokenRenewal;
-import org.apache.hadoop.mapreduce.security.token.JobTokenSecretManager;
-import org.apache.hadoop.mapreduce.server.jobtracker.TaskTracker;
-import org.apache.hadoop.security.Credentials;
 
 /*******************************************************
  * JobTracker is the central location for submitting and 
@@ -330,6 +328,9 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
    * but that haven't reported back yet.
    * Note that I included a stop() method, even though there is no place
    * where JobTrackers are cleaned up.
+   * 
+   * 任务已经被派发至tt,但一直没有传达报告,将由此线程置为超时,并从
+   * launchingTasks中移除
    */
   private class ExpireLaunchingTasks implements Runnable {
     /**
@@ -593,6 +594,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
             }
           }
           synchronized (userToJobsMap) {
+            // 把已经完成的任务从userToJobsMap移除
+            // 只是当用户已完成job数太多时, 只在内存里保留一部分job的信息
             Iterator<Map.Entry<String, ArrayList<JobInProgress>>> 
                 userToJobsMapIt = userToJobsMap.entrySet().iterator();
             while (userToJobsMapIt.hasNext()) {
@@ -635,6 +638,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
                              jobUser + "'");
 
                     // clean up job files from the local disk
+                    // 当作业完成时清除掉它的conf.xml
                     JobHistory.JobInfo.cleanupJob(job.getProfile().getJobID());
                     addToCache(job);
                   }
@@ -1641,12 +1645,13 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
       LOG.info("Restart count of the jobtracker : " + restartCount);
 
       // I. Init the jobs and cache the recovered job history filenames
+      //  初始化作业, 缓存已恢复的作业历史文件
       Map<JobID, Path> jobHistoryFilenameMap = new HashMap<JobID, Path>();
       Iterator<JobID> idIter = jobsToRecover.iterator();
       JobInProgress job = null;
       File jobIdFile = null;
 
-      // 0. Cleanup
+      // 0. Cleanup 将所有文件的配置文件给删除掉
       try {
         JobHistory.JobInfo.deleteConfFiles();
       } catch (IOException ioe) {
@@ -1712,6 +1717,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
           String logFileName = 
             JobHistory.JobInfo.getJobHistoryFileName(job.getJobConf(), id);
           if (logFileName != null) {
+            // 作业文件从这儿找到 
             Path jobHistoryFilePath = 
               JobHistory.JobInfo.getJobHistoryLogLocation(logFileName);
 
@@ -1871,10 +1877,34 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   //     任务如果失败，则需要在作业100%完成前重行执行。
 
   // All the known jobs.  (jobid->JobInProgress)
+  // 这儿使用TreeMap而不使用HashMap的原因: 
+  // 1. HashMap迭代 collection 视图所需的时间与 HashMap 实例的“容量”（桶的数量）及其大小
+  //（键-值映射关系数）成比例。所以，getRunningJobs(), failedJobs(), compeltedJobs() 
+  // 等方法的迭代性能会受初始容量设置的影响。下面是HashMap的迭代器实现
+  //  final Entry<K,V> nextEntry() {
+  //    if (modCount != expectedModCount)
+  //        throw new ConcurrentModificationException();
+  //    Entry<K,V> e = next;
+  //    if (e == null)
+  //        throw new NoSuchElementException();
+  //
+  //    if ((next = e.next) == null) {
+  //        Entry[] t = table;
+  //        while (index < t.length && (next = t[index++]) == null) // 这一句影响性能
+  //            ;
+  //    }
+  //    current = e;
+  //    return e;
+  //  }
+  // 2. HashMap的get操作时间不稳定
+  // 3. TreeMap是有序的,JT的web显示了getRunningJobs(), failedJobs(), compeltedJobs()返回
+  // 的vector. 这个vector顺序是靠jobs的顺序保证的
+  // 为什么不使用ConcurrentSkipListMap?
   Map<JobID, JobInProgress> jobs =  
     Collections.synchronizedMap(new TreeMap<JobID, JobInProgress>());
 
   // (user -> list of JobInProgress)
+  // 这个目前没用. web上不显示指定用户的所有JIP列表
   TreeMap<String, ArrayList<JobInProgress>> userToJobsMap =
     new TreeMap<String, ArrayList<JobInProgress>>();
     
@@ -1907,6 +1937,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     new TreeMap<String, Set<TaskAttemptID>>();
 
   // (trackerID --> last sent HeartBeatResponse)
+  // 用来获取 TT上一次心跳的响应 
+  // 据此可以: 1. 判断是否TT首次连接JT; 2. 判断是否重复处理了一个心跳; etc
   Map<String, HeartbeatResponse> trackerToHeartbeatResponseMap = 
     new TreeMap<String, HeartbeatResponse>();
 
@@ -2209,6 +2241,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
         FileStatus[] systemDirData = fs.listStatus(this.systemDir);
         // Check if the history is enabled .. as we cant have persistence with 
         // history disabled
+        // 如果jt在启动时开启了作业修复机制和作业历史, 并且system dir不为空时
+        // 将待修复的作业加入到recoveryManager中,等待修复
         if (conf.getBoolean("mapred.jobtracker.restart.recover", false) 
             && !JobHistory.isDisableHistory()
             && systemDirData != null) {
@@ -2422,6 +2456,15 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   }
 
   void close() throws IOException {
+    // 1. 停web服务
+    // 2. 停与tt交互的服务
+    // 3. 停expireTrackersThread线程
+    // 4. 停retireJobsThread线程
+    // 5. 停作业调度器
+    // 6. 停expireLaunchingTaskThread
+    // 7. 停completedJobsStoreThread
+    // 8. 关闭安全方面的代理令牌更新服务
+    // 9. 关闭jt
     if (this.infoServer != null) {
       LOG.info("Stopping infoServer");
       try {
@@ -2641,7 +2684,9 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
    * Here we also ensure that for a given user we maintain 
    * information for only MAX_COMPLETE_USER_JOBS_IN_MEMORY jobs 
    * on the JobTracker.
-   *  
+   * 在作业结束(success/failure/killed)时安全地清理所有数据结构
+   * 这儿我们也确保对于一个指定的用户,我们在JobTracker只维护
+   * MAX_COMPLETE_USER_JOBS_IN_MEMORY个作业的信息
    * @param job completed job.
    */
   synchronized void finalizeJob(JobInProgress job) {
@@ -2662,6 +2707,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
 
     // mark the job as completed
     try {
+      // 将已完成作业的历史移到history/done文件夹里面
       JobHistory.JobInfo.markCompleted(id);
     } catch (IOException ioe) {
       LOG.info("Failed to mark job " + id + " as completed!", ioe);
@@ -2673,6 +2719,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     long now = clock.getTime();
     
     // mark the job for cleanup at all the trackers
+    // 把作业加入到cleanup队列里面, 即加入到trackerToJobsToCleanup
     addJobForCleanup(id);
 
     // add the blacklisted trackers to potentially faulty list
@@ -2740,10 +2787,14 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
    * careful to synchronize.
    */
   public synchronized List<JobInProgress> getRunningJobs() {
+    // runningJobs()方法调用了JIP.getStatus, 所以此方法是
+    // synchronized才能保证线程安全
     synchronized (jobs) {
       return runningJobs();
     }
   }
+  // 局部变量没有必要用vector, 方法内肯定线程安全
+  // 应该让用户保证返回值的线程安全, 不应该在这个方法内保证
   public Vector<JobInProgress> failedJobs() {
     Vector<JobInProgress> v = new Vector<JobInProgress>();
     for (Iterator it = jobs.values().iterator(); it.hasNext();) {
@@ -2757,6 +2808,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     return v;
   }
   public Vector<JobInProgress> completedJobs() {
+    // 为什么这个方法调用了JIP.getStatus()却没有加锁?
+    // 按理JIP.getStatus()不是线程安全的,所以此方法不是线程安全的
     Vector<JobInProgress> v = new Vector<JobInProgress>();
     for (Iterator it = jobs.values().iterator(); it.hasNext();) {
       JobInProgress jip = (JobInProgress) it.next();
@@ -3380,6 +3433,9 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     
   /**
    * Process incoming heartbeat messages from the task trackers.
+   * 处理来自TT的心跳消息
+   * 首先更新JT上此TT状态, 更新的时候要保证taskTrackers已经锁住.
+   * 因为updateTaskTrackerStatus不对taskTrackers加锁
    */
   private synchronized boolean processHeartbeat(
                                  TaskTrackerStatus trackerStatus, 
@@ -3432,6 +3488,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
    */
   private synchronized List<TaskTrackerAction> getTasksToKill(
                                                               String taskTracker) {
+    // 从tt中找出它自身所运行的所有task, 找出需要kill的task
+    // 如果要kill该tt的所有task, 也加入到killList中
     
     Set<TaskAttemptID> taskIds = trackerToTaskMap.get(taskTracker);
     List<TaskTrackerAction> killList = new ArrayList<TaskTrackerAction>();
@@ -3491,6 +3549,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
   
   /**
    * A tracker wants to know if any job needs cleanup because the job completed.
+   * tt想知道作业完成了, 是否需要清除
    */
   private List<TaskTrackerAction> getJobsForCleanup(String taskTracker) {
     Set<JobID> jobs = null;
@@ -3841,13 +3900,15 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
 
   /**
    * @see JobSubmissionProtocol#killJob
+   * 根据JOBID, 杀死一道作业
    */
   public synchronized void killJob(JobID jobid) throws IOException {
     if (null == jobid) {
       LOG.info("Null jobid object sent to JobTracker.killJob()");
       return;
     }
-    
+    // 首先从jobs表里面查一下是否有这道作业
+    // 如果存在这道作业, 则调用killJob(JIP)
     JobInProgress job = jobs.get(jobid);
     
     if (null == job) {
@@ -3861,8 +3922,15 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
 
     killJob(job);
   }
-  
+
   private synchronized void killJob(JobInProgress job) {
+    // 因为killJob被init调用, init不是synchronized的方法,所以此方法需要同步
+    // 此方法先获取作业在kill之前的状态.将作业kill之后, 再获取作业的状态.与
+    // 先前的状态做比较, 如果两次状态不同而且新状态是被killed了, 则发出事件
+    // JobStatusChangeEvent
+    // 为什么不是先取得kill之前作业的RunState,kill之后比较一下这个RunState?
+    // 毕竟采用clone,是对象的deep coy, 消耗会比较大
+    // 因为JIP.getStatus线程不安全? JT被锁一定保证没有别的线程操作JIP吗?
     LOG.info("Killing job " + job.getJobID());
     JobStatus prevStatus = (JobStatus)job.getStatus().clone();
     job.kill();
@@ -3873,6 +3941,10 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     //   invoked
     //   If the job is killed in the RUNNING state then cleanup tasks will be 
     //   launched and the updateTaskStatuses() will take care of it
+    // 如果作业被杀死, 通知listeners
+    // 注意: 
+    //   如果作业在PREP状态被杀, listener将被调用
+    //   如果作业在RUNNING状态被杀, 则将启动cleanup任务, updateTaskStatuses()将
     JobStatus newStatus = (JobStatus)job.getStatus().clone();
     if (prevStatus.getRunState() != newStatus.getRunState()
         && newStatus.getRunState() == JobStatus.KILLED) {
@@ -3926,7 +3998,7 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
     }
     String user = UserGroupInformation.getCurrentUser().getUserName();
     return secretManager.renewToken(token, user);
-  }  
+  }
 
   public void initJob(JobInProgress job) {
     if (null == job) {
@@ -4022,6 +4094,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
       if (job != null) {
         // Safe to call JobInProgress.getProfile while holding the lock
         // on the JobTracker since it isn't a synchronized method
+        // 持有JT的锁可以保证调JobInProgress.getProfile是线程安全的
+        // 因为这个方法不是synchronized方法式
         return job.getProfile();
       }  else {
         RetireJobInfo info = retireJobs.get(jobid);
@@ -4043,6 +4117,8 @@ public class JobTracker implements MRConstants, InterTrackerProtocol,
       if (job != null) {
         // Safe to call JobInProgress.getStatus while holding the lock
         // on the JobTracker since it isn't a synchronized method
+        // 持有JT的锁可以保证调JobInProgress.getStatus是线程安全的
+        // 因为这个方法不是synchronized方法式
         return job.getStatus();
       } else {
         

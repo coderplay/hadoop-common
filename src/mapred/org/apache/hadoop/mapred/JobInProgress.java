@@ -70,6 +70,9 @@ import org.apache.hadoop.util.StringUtils;
  * a Job on the straight and narrow.  It keeps its JobProfile
  * and its latest JobStatus, plus a set of tables for 
  * doing bookkeeping of its Tasks.
+ * 
+ * JIP严格地维护了Job的所有信息. 它维护了它的JobPrifile和最近的
+ * JobStatus, 加上一系列记录它的tasks的花名表
  * ***********************************************************
  */
 public class JobInProgress {
@@ -136,6 +139,7 @@ public class JobInProgress {
   Map<Node, List<TaskInProgress>> nonRunningMapCache;
   
   // Map of NetworkTopology Node to set of running TIPs
+  // 缓存有任务运行的节点
   Map<Node, Set<TaskInProgress>> runningMapCache;
 
   // A list of non-local non-running maps
@@ -572,7 +576,9 @@ public class JobInProgress {
     if (tasksInited.get() || isComplete()) {
       return;
     }
+    // 初始化任务这个阶段,首尾都会检查一下作业是否被杀死
     synchronized(jobInitKillStatus){
+      // 什么时候 在这儿会jobInitKillStatus.initStarted = true?
       if(jobInitKillStatus.killed || jobInitKillStatus.initStarted) {
         return;
       }
@@ -582,6 +588,7 @@ public class JobInProgress {
     LOG.info("Initializing " + jobId);
     final long startTimeFinal = this.startTime;
     // log job info as the user running the job
+    // 在作业历史中记录一下用户已经提交了该作业
     try {
     userUGI.doAs(new PrivilegedExceptionAction<Object>() {
       @Override
@@ -592,10 +599,12 @@ public class JobInProgress {
       }
     });
     } catch(InterruptedException ie) {
+      // UGI.doAs会抛出这个异常
       throw new IOException(ie);
     }
     
     // log the job priority
+    // 设置作业的优先级并记录
     setPriority(this.priority);
     
     //
@@ -605,7 +614,7 @@ public class JobInProgress {
     
     //
     // read input splits and create a map per a split
-    //
+    // 
     TaskSplitMetaInfo[] splits = createSplits(jobId);
     numMapTasks = splits.length;
 
@@ -2320,6 +2329,7 @@ public class JobInProgress {
   
   /**
    * A taskid assigned to this JobInProgress has reported in successfully.
+   * 指派给此JIP的taskid报告已经成功运行完该task
    */
   public synchronized boolean completedTask(TaskInProgress tip, 
                                             TaskStatus status)
@@ -2453,6 +2463,7 @@ public class JobInProgress {
 
   /**
    * Job state change must happen thru this call
+   * 作业的状态变化都要通过这个调用
    */
   private void changeStateTo(int newState) {
     int oldState = this.status.getRunState();
@@ -2517,6 +2528,9 @@ public class JobInProgress {
   }
   
   private synchronized void terminateJob(int jobTerminationState) {
+    // 作业要么是自已完成了, 要么是被中止了, 这个方法处理的是后种情况
+    // jobComplete()处理的是前种情况. job complete的情况不仅是success,
+    // 有可能是failed,但也已经完成了
     if ((status.getRunState() == JobStatus.RUNNING) ||
         (status.getRunState() == JobStatus.PREP)) {
       this.finishTime = jobtracker.getClock().getTime();
@@ -2525,6 +2539,7 @@ public class JobInProgress {
       this.status.setCleanupProgress(1.0f);
       
       if (jobTerminationState == JobStatus.FAILED) {
+        // JobStatus.FAILED
         changeStateTo(JobStatus.FAILED);
 
         // Log the job summary
@@ -2535,6 +2550,7 @@ public class JobInProgress {
                                      this.finishedMapTasks, 
                                      this.finishedReduceTasks);
       } else {
+        // JobStatus.KILLED
         changeStateTo(JobStatus.KILLED);
 
         // Log the job summary
@@ -2566,10 +2582,16 @@ public class JobInProgress {
    * terminateJob as there is no need to launch cleanup tip.
    * This method is reentrant.
    * @param jobTerminationState job termination state
-   */
+   * 中止作业和 组成该作业的所有任务. 调用此方法将标记此作业为failed/killed. 
+   * 将启动cleanup tip. 但如果作业没有被初始化, 它将直接调用terminateJob,不需要
+   * 启动cleanup tip. 
+   * 此方法是可重入的. 
+  */
   private synchronized void terminate(int jobTerminationState) {
     if(!tasksInited.get()) {
     	//init could not be done, we just terminate directly.
+      // 作业还没初始化就接到kill命令, 我们只需要直接中止这道作业
+      // 不需要清除作业产生的临时文件
       terminateJob(jobTerminationState);
       return;
     }
@@ -2578,17 +2600,18 @@ public class JobInProgress {
          (status.getRunState() == JobStatus.PREP)) {
       LOG.info("Killing job '" + this.status.getJobID() + "'");
       if (jobTerminationState == JobStatus.FAILED) {
-        if(jobFailed) {//reentrant
+        if(jobFailed) {//reentrant 重入了. 重入的原因是???
           return;
         }
         jobFailed = true;
       } else if (jobTerminationState == JobStatus.KILLED) {
-        if(jobKilled) {//reentrant
+        if(jobKilled) {//reentrant 重入了. 重入的原因是???
           return;
         }
         jobKilled = true;
       }
       // clear all unclean tasks
+      // 清除掉所有未清除的任务
       clearUncleanTasks();
       //
       // kill all TIPs.
@@ -2608,6 +2631,7 @@ public class JobInProgress {
   private void cancelReservedSlots() {
     // Make a copy of the set of TaskTrackers to prevent a 
     // ConcurrentModificationException ...
+    // 保持TT的拷贝,用来防止ConcurrentModificationException
     Set<TaskTracker> tm = 
       new HashSet<TaskTracker>(trackersReservedForMaps.keySet());
     for (TaskTracker tt : tm) {
@@ -2644,6 +2668,10 @@ public class JobInProgress {
     synchronized(jobInitKillStatus) {
       jobInitKillStatus.killed = true;
       //if not in middle of init, terminate it now
+      // 如果作业不是正在初始化, 直接kill
+      // 如果刚好正在初始化这道作业, 则见initTasks()
+      // initTasks()方法首尾都会检查一次作业是否被杀死
+      // 如果初始化后被杀死, 则抛出KillInterruptedException
       if(!jobInitKillStatus.initStarted || jobInitKillStatus.initDone) {
         //avoiding nested locking by setting flag
         killNow = true;
@@ -2926,10 +2954,13 @@ public class JobInProgress {
    * The job is dead.  We're now GC'ing it, getting rid of the job
    * from all tables.  Be sure to remove all of this job's tasks
    * from the various tables.
+   * 作业已经死掉. 我们现在对它进行垃圾回收, 把它从所有表中移除.
+   * 确保从众多表中移除掉该作业的所有任务.
    */
   void garbageCollect() {
     synchronized(this) {
       // Cancel task tracker reservation
+      // 回收TT的slot
       cancelReservedSlots();
 
       // Let the JobTracker know that a job is complete
@@ -3087,6 +3118,8 @@ public class JobInProgress {
    * To keep track of kill and initTasks status of this job. initTasks() take 
    * a lock on JobInProgress object. kill should avoid waiting on 
    * JobInProgress lock since it may take a while to do initTasks().
+   * 用来跟踪作业的kill和initTasks状态. initTasks()锁住JIP对象, kill 应当避免等待
+   * JIP锁,因为initTasks()操作可能很费时.
    */
   private static class JobInitKillStatus {
     //flag to be set if kill is called

@@ -331,12 +331,13 @@ public class JobHistory {
    * @return true if intialized properly
    *         false otherwise
    *  
-   *  初始化JobHistory文件
+   *  JobTracker初始化时, 会初始化JobHistory文件
    */
   public static boolean init(JobTracker jobTracker, JobConf conf,
              String hostname, long jobTrackerStartTime){
     try {
       // 作业历史目录可以是一个hdfs路径
+      // 默认是在hadoop.log.dir下面的本地目录history
       LOG_DIR = conf.get("hadoop.job.history.location" ,
         "file:///" + new File(
         System.getProperty("hadoop.log.dir")).getAbsolutePath()
@@ -879,6 +880,8 @@ public class JobHistory {
     public static Path getJobHistoryLogLocationForUser(String logFileName, 
                                                        JobConf jobConf) {
       // find user log directory 
+      // 如果没有定义hadoop.job.history.user.location,
+      // 则在output path下面建立一个_logs/history目录, 这一般是一个HDFS目录
       Path userLogFile = null;
       Path outputPath = FileOutputFormat.getOutputPath(jobConf);
       String userLogDir = jobConf.get("hadoop.job.history.user.location",
@@ -1147,6 +1150,8 @@ public class JobHistory {
     /**
      * Deletes job data from the local disk.
      * For now just deletes the localized copy of job conf
+     * 从本地硬盘上删除job数据
+     * 目前只是删除job conf的本地拷贝
      */
     static void cleanupJob(JobID id) {
       String localJobFilePath =  JobInfo.getLocalJobFilePath(id);
@@ -1161,6 +1166,7 @@ public class JobHistory {
 
     /**
      * Delete job conf from the history folder.
+     * 删除history目录下的所有job conf文件
      */
     static void deleteConfFiles() throws IOException {
       LOG.info("Cleaning up config files from the job history folder");
@@ -1337,6 +1343,7 @@ public class JobHistory {
       }
 
       /* Storing the job conf on the log dir */
+      // 这儿定义了job conf xml文件
       Path jobFilePath = null;
       if (LOG_DIR != null) {
         jobFilePath = new Path(LOG_DIR + File.separator + 
@@ -1350,6 +1357,7 @@ public class JobHistory {
       }
       FSDataOutputStream jobFileOut = null;
       try {
+        // 将job配置写入到jobid_conf.xml
         if (LOG_DIR != null) {
           int defaultBufferSize = 
               LOGDIR_FS.getConf().getInt("io.file.buffer.size", 4096);
@@ -2129,7 +2137,7 @@ public class JobHistory {
    * Delete history files older than one month. Update master index and remove all 
    * jobs older than one month. Also if a job tracker has no jobs in last one month
    * remove reference to the job tracker. 
-   *
+   * 删除一个月前的历史文件. 更新master index
    */
   public static class HistoryCleaner implements Runnable{
     static final long ONE_DAY_IN_MS = 24 * 60 * 60 * 1000L;

@@ -96,6 +96,7 @@ class JobSubmitter implements Gridmix.Component<GridmixJob> {
           return;
         }
         // Sleep until deadline
+        // 模拟何时提交job
         long nsDelay = job.getDelay(TimeUnit.NANOSECONDS);
         while (nsDelay > 0) {
           TimeUnit.NANOSECONDS.sleep(nsDelay);

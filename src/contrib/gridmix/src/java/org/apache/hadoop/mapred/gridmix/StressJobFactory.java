@@ -282,7 +282,7 @@ public class StressJobFactory extends JobFactory<Statistics.ClusterStats> {
   }
 
   static class LoadStatus {
-    int mapSlotsBackfill;
+    int mapSlotsBackfill; // 装填的map slots数
     int mapSlotCapacity;
     int reduceSlotsBackfill;
     int reduceSlotCapacity;

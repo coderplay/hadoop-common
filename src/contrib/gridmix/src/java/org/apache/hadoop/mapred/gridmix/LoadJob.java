@@ -44,6 +44,7 @@ import java.util.Random;
 
 /**
  * Synthetic job generated from a trace description.
+ * 从trace描述里面人造出来的作业
  */
 class LoadJob extends GridmixJob {
 
