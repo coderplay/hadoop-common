@@ -71,6 +71,17 @@ enum GridmixJobSubmissionPolicy {
     this.pollingInterval = pollingInterval;
   }
 
+  /**
+   * 
+   * @param submitter 作业提交者
+   * @param producer 作业生产者
+   * @param scratchDir 临时数据目录
+   * @param conf 配置
+   * @param startFlag 
+   * @param userResolver
+   * @return
+   * @throws IOException
+   */
   public abstract JobFactory createJobFactory(
     JobSubmitter submitter, JobStoryProducer producer, Path scratchDir,
     Configuration conf, CountDownLatch startFlag, UserResolver userResolver)

@@ -423,7 +423,11 @@ class TaskInProgress {
      * TaskInProgress close it.
      * 
      * However, for completed map tasks we do not close the task which
-     * actually was the one responsible for _completing_ the TaskInProgress. 
+     * actually was the one responsible for _completing_ the TaskInProgress.
+     * 如果任务此时没有被关闭,而任务所属的TIP已经完成, 则应当关闭此任务
+     * 然而对于已经完成的map任务, 我们不关闭之前负责完成此TIP的任务????
+     * 
+     *  
      */
     boolean close = false;
     TaskStatus ts = taskStatuses.get(taskid);

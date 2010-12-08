@@ -44,6 +44,9 @@ import org.apache.hadoop.tools.rumen.Pre21JobHistoryConstants.Values;
  * get input splits of a non-exist task, a non-exist task attempt, or an
  * ill-formed task attempt, proper objects are made up from statistical
  * sketches.
+ * 
+ *  {@link ZombieJob}是{@link LoggedJob}原始JSON对象的上层包装。
+ *  每个{@link ZombieJob}对象代表作业历史的一道作业。
  */
 @SuppressWarnings("deprecation")
 public class ZombieJob implements JobStory {
@@ -174,6 +177,7 @@ public class ZombieJob implements JobStory {
 
       // If not all map tasks are in job trace, should make up some splits
       // for missing map tasks.
+      // 如果不是所有map任务都在job trace里，应该为丢失的map任务伪造一些splits
       int totalMaps = job.getTotalMaps();
       if (totalMaps < splitsList.size()) {
         LOG.warn("TotalMaps for job " + job.getJobID()
@@ -195,6 +199,7 @@ public class ZombieJob implements JobStory {
         if (cluster == null) {
           splitsList.add(new FileSplit(emptyPath, 0, 0, new String[0]));
         } else {
+          // 随机地挑选一些主机组成, 准备以此生成splits
           MachineNode[] mNodes = cluster.getRandomMachines(avgHostPerSplit);
           String[] hosts = new String[mNodes.length];
           for (int j = 0; j < hosts.length; ++j) {

@@ -95,6 +95,7 @@ public class DebugJobProducer implements JobStoryProducer {
 
   /**
    * Generate random task data for a synthetic job.
+   * 人造作业
    */
   static class MockJob implements JobStory {
 

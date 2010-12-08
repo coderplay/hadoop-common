@@ -22,6 +22,8 @@ package org.apache.hadoop.hdfs.protocol;
  * has been implemented as long[].
  * This class is usefull for block report. Rather than send block reports
  * as a Block[] we can send it as a long[].
+ * 此类对于block report的时候有用. 我们可以不用Block[,而用ong[]发送
+ * block report.
  *
  */
 public class BlockListAsLongs {

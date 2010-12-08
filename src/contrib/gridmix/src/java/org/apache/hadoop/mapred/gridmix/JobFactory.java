@@ -83,6 +83,21 @@ abstract class JobFactory<T> implements Gridmix.Component<Void>,StatListener<T>{
 
   /**
    * Constructor permitting JobStoryProducer to be mocked.
+   * 
+   * JobHistory  JobTracker产生的日志,每道作业拥有一个JobHistory文件。JobHistory一般与conf.xml成对出现作业历史当中
+   * HadoopLogsAnalyzer rumen的主入口类。用来分析JobHistory文件及conf.xml,形成作业的JSON描述 job trace.
+   * JobStory 通过job trace文件形成作业故事。
+   * ZombieJob JobStory的实现。代表已经完成过的作业,即从作业历史中读取的作业。这个比喻很形象,把作业比较成一个历史活动过的人物, 已经被记到作业历史中。ZombieJob是把历史死了的作业重新复活, 像僵死的人复活一样。
+   * DebugJobProducer.MockJob JobStory的实现，人造作业故事。
+   * JobStoryProducer 产生作业故事的生产者
+   * ZombieJobProducer
+   * DebugJobProducer
+   * JobSubmitter 提交GridmixJob的提交者
+   * JobCreator 创建GridmixJob的生产者
+   * JobFactory JobStoryProducer通过读取job trace文件的历史作业描述信息，形成一个JobStory.
+   * rThread线程会读取这个作业故事, 通过JobCreator产生一个GridmixJob，然后加入到JobSubmitter的队列中。
+   * JobSubmitter的工作线程立即从队列中取出GridmixJob去执行。
+   * 
    * @param submitter Component to which deserialized jobs are passed
    * @param jobProducer Producer generating JobStory objects.
    * @param scratch Directory into which to write output from simulated jobs
@@ -170,12 +185,15 @@ abstract class JobFactory<T> implements Gridmix.Component<Void>,StatListener<T>{
 
   protected JobStory getNextJobFiltered() throws IOException {
     JobStory job;
+    // 从job trace里获取一道成功完成的作业
     do {
       job = jobProducer.getNextJob();
     } while (job != null
         && (job.getOutcome() != Pre21JobHistoryConstants.Values.SUCCESS ||
             job.getSubmissionTime() < 0));
     return null == job ? null : new FilterJobStory(job) {
+        // FilterJobStory可以使JobStory override一些行为
+        // MinTaskInfo保证Task的信息不是负数
         @Override
         public TaskInfo getTaskInfo(TaskType taskType, int taskNumber) {
           return new MinTaskInfo(this.job.getTaskInfo(taskType, taskNumber));
