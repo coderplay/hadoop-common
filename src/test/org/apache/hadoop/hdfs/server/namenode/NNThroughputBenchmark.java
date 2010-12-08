@@ -73,6 +73,16 @@ import org.apache.log4j.LogManager;
  * every G operations, which purges the name-node's user group cache.
  * By default the refresh is never called.</li>
  * </ol>
+ * 此基准测试的命名行参数如下:
+ * <ol>
+ * <li>要执行的操作总数</li>
+ * <li>执行这些操作需要的线程数</li>
+ * <li>接着是操作参数</li>
+ * <li>-logLevel L 指定测试运行时的日志级别.
+ * 默认的日志级别为{@link Level#ERROR}.</li>
+ * <li>-UGCacheRefreshCount G 每G次操作后使测试调用
+ * {@link NameNode#refreshUserToGroupsMappings(Configuration)},
+ * 它会裁剪namenode的用户组缓存.默认永远不调用</li>
  * 
  * The benchmark first generates inputs for each thread so that the
  * input generation overhead does not effect the resulting statistics.
@@ -97,6 +107,7 @@ public class NNThroughputBenchmark {
 
     // We do not need many handlers, since each thread simulates a handler
     // by calling name-node methods directly
+    // 我们不需要很多handler,因为各线程直接调用nn的方法, 1个线程模拟1个handler
     config.setInt("dfs.namenode.handler.count", 1);
     // set exclude file
     config.set("dfs.hosts.exclude", "${hadoop.tmp.dir}/dfs/hosts/exclude");
@@ -1194,6 +1205,7 @@ public class NNThroughputBenchmark {
       // run each benchmark
       for(OperationStatsBase op : ops) {
         LOG.info("Starting benchmark: " + op.getOpName());
+        // 一项一项来???
         op.benchmark();
         op.cleanUp();
       }

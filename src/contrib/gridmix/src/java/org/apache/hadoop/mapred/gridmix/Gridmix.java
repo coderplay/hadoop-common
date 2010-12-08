@@ -160,6 +160,7 @@ public class Gridmix extends Configured implements Tool {
       LOG.info(" Submission policy is " + policy.name());
       statistics = new Statistics(conf, policy.getPollingInterval(), startFlag);
       monitor = createJobMonitor(statistics);
+      // 作业submitter线程数
       int noOfSubmitterThreads = (policy == GridmixJobSubmissionPolicy.SERIAL) ? 1
           : Runtime.getRuntime().availableProcessors() + 1;
 
@@ -267,6 +268,8 @@ public class Gridmix extends Configured implements Tool {
       UserResolver userResolver) throws IOException, InterruptedException {
     InputStream trace = null;
     try {
+      // 在ioPath目录下面建立一个gridmix子目录, 用作存临时数据
+      // ioPath作为输入目录
       Path scratchDir = new Path(ioPath, conf.get(GRIDMIX_OUT_DIR, "gridmix"));
       final FileSystem scratchFs = scratchDir.getFileSystem(conf);
       scratchFs.mkdirs(scratchDir, new FsPermission((short) 0777));

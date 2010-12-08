@@ -4683,6 +4683,7 @@ public class FSNamesystem implements FSConstants, FSNamesystemMBean {
    * Check whether current user have permissions to access the path.
    * For more details of the parameters, see
    * {@link FSPermissionChecker#checkPermission(String, INodeDirectory, boolean, FsAction, FsAction, FsAction, FsAction)}.
+   * 检查当前用户是否拥有访问path的权限
    */
   private FSPermissionChecker checkPermission(String path, boolean doCheckOwner,
       FsAction ancestorAccess, FsAction parentAccess, FsAction access,

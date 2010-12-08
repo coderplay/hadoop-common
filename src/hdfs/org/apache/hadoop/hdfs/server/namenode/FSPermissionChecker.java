@@ -119,17 +119,22 @@ private final UserGroupInformation ugi;
 
     synchronized(root) {
       INode[] inodes = root.getExistingPathINodes(path);
+      // [root INode, ...., parent INode, self INode]
       int ancestorIndex = inodes.length - 2;
+      // 如果要操作某文件/某子目录, 得有它的所有祖先目录的EXECUTE权限
       for(; ancestorIndex >= 0 && inodes[ancestorIndex] == null;
           ancestorIndex--);
       checkTraverse(inodes, ancestorIndex);
 
+      // 检查祖目录的权限
       if (ancestorAccess != null && inodes.length > 1) {
         check(inodes, ancestorIndex, ancestorAccess);
       }
+      // 检查父目录的权限
       if (parentAccess != null && inodes.length > 1) {
         check(inodes, inodes.length - 2, parentAccess);
       }
+      // 检查自身的权限
       if (access != null) {
         check(inodes[inodes.length - 1], access);
       }
@@ -149,6 +154,9 @@ private final UserGroupInformation ugi;
     throw new AccessControlException("Permission denied");
   }
 
+  /**
+   * 如果要操作某文件/某子目录, 得有它的所有祖先目录的EXECUTE权限
+   */
   private void checkTraverse(INode[] inodes, int last
       ) throws AccessControlException {
     for(int j = 0; j <= last; j++) {

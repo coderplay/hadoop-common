@@ -185,12 +185,14 @@ class INodeDirectory extends INode {
    * Retrieve the existing INodes along the given path. The first INode
    * always exist and is this INode.
    * 
+   * 根据传入的路径path获取存在的INodes数组. 数组的第一个INode一般存在,而且是此路径的INode
    * @param path the path to explore
    * @return INodes array containing the existing INodes in the order they
    *         appear when following the path from the root INode to the
    *         deepest INodes. The array size will be the number of expected
    *         components in the path, and non existing components will be
-   *         filled with null
+   *         filled with null 
+   *         
    *         
    * @see #getExistingPathINodes(byte[][], INode[])
    */

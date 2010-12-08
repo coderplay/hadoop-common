@@ -29,7 +29,6 @@ class ParsedLine {
 
   @SuppressWarnings("unused") 
   ParsedLine(String fullLine, int version) {
-    super();
 
     content = new Properties();
 

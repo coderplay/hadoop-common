@@ -1577,6 +1577,7 @@ public class TaskTracker
         LOG.info("Interrupted. Closing down.");
         return State.INTERRUPTED;
       } catch (DiskErrorException de) {
+        // transmit heartbeat时会检查本地磁盘  
         String msg = "Exiting task tracker for disk error:\n" +
           StringUtils.stringifyException(de);
         LOG.error(msg);

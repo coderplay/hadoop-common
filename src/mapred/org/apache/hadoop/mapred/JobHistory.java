@@ -1201,6 +1201,9 @@ public class JobHistory {
       logSubmitted(jobId, jobConf, jobConfPath, submitTime, true);
     }
     
+    /**
+     * 例如Job JOBID="job_201011190946_0006" JOBNAME="NNBench-create_write" USER="zhouchen\.zm" SUBMIT_TIME="1290167909702" JOBCONF="hdfs://kslave11\.sds\.cnz\.alimama\.com/home/zhouchen\.zm/\.hadoop-tmp-zhouchen\.zm/mapred/staging/zhouchen\.zm/\.staging/job_201011190946_0006/job\.xml" VIEW_JOB="*" MODIFY_JOB="*" JOB_QUEUE="default" .
+     */
     public static void logSubmitted(JobID jobId, JobConf jobConf, 
                                     String jobConfPath, long submitTime, 
                                     boolean restarted) 
@@ -1385,7 +1388,7 @@ public class JobHistory {
     }
     /**
      * Logs launch time of job. 
-     * 
+     * 例如Job JOBID="job_201011190946_0006" LAUNCH_TIME="1290167909952" TOTAL_MAPS="102" TOTAL_REDUCES="1" JOB_STATUS="PREP" .
      * @param jobId job id, assigned by jobtracker. 
      * @param startTime start time of job. 
      * @param totalMaps total maps assigned by jobtracker. 
@@ -1539,6 +1542,7 @@ public class JobHistory {
     }
     /**
      * Log job's priority. 
+     * 例如 Job JOBID="job_201011190946_0006" JOB_PRIORITY="NORMAL" .
      * @param jobid job id
      * @param priority Jobs priority 
      */
